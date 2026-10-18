@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>SugarFree Journey</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        mint: { 50:'#edfaf4', 100:'#d0f2e1', 200:'#a3e6c8', 300:'#6dd8aa', 400:'#4ECCA3', 500:'#38b08a', 600:'#2d8a6e', 700:'#236b56', 800:'#1a4d3e', 900:'#123629' },
+        slate2: { 50:'#f4f5f6', 100:'#e4e6e8', 200:'#c9cdd1', 300:'#a8aeb4', 400:'#7d858d', 500:'#5d656e', 600:'#4a5058', 700:'#393E46', 800:'#2b2f35', 900:'#1d2024' },
+        warm: '#FAF8F5',
+        coral: '#E88D67',
+        sugar: { green:'#4ECCA3', yellow:'#F0C040', red:'#E85D5D' }
+      },
+      fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] }
+    }
+  }
+}
+</script>
+<style>
+  * { -webkit-tap-highlight-color: transparent; }
+  body { font-family: 'Inter', system-ui, sans-serif; background: #FAF8F5; overscroll-behavior: none; }
+  .breathe-circle { animation: breathe 4s ease-in-out infinite; }
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); opacity: 0.6; }
+    50% { transform: scale(1.35); opacity: 1; }
+  }
+  .fade-in { animation: fadeIn 0.3s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .slide-up { animation: slideUp 0.35s cubic-bezier(0.16,1,0.3,1); }
+  @keyframes slideUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+// ─── Data helpers ──────────────────────────────────────────
+const STORAGE_KEY = 'sugarfree_journey';
+const load = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; } };
+const save = (d) => localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+const today = () => new Date().toISOString().slice(0, 10);
+const dayKey = (d) => d.toISOString().slice(0, 10);
+
+function getData() {
+  const d = load();
+  if (!d.logs) d.logs = {};
+  if (!d.weights) d.weights = {};
+  return d;
+}
+function setData(fn) {
+  const d = getData();
+  fn(d);
+  save(d);
+}
+
+const SUGAR_CATEGORIES = [
+  { id: 'drink', emoji: '🧋', label: 'Sweetened Drink / Boba' },
+  { id: 'dessert', emoji: '🍰', label: 'Dessert / Pastry' },
+  { id: 'candy', emoji: '🍫', label: 'Candy / Chocolate' },
+  { id: 'sauce', emoji: '🥫', label: 'Hidden Sauce / Condiment' },
+];
+
+const SWAPS = [
+  { emoji: '🫧', text: 'Cold sparkling water with a squeeze of lime' },
+  { emoji: '🥜', text: 'A small handful of almonds or walnuts' },
+  { emoji: '🍵', text: 'A warm cup of herbal tea (cinnamon is great!)' },
+];
+
+const ENCOURAGE_RED = [
+  "One meal doesn't ruin your progress. Drink a glass of water and let's win tomorrow!",
+  "Every champion has off days. What matters is you're still here tracking.",
+  "Progress isn't perfection. You showed up today, and that counts.",
+];
+const ENCOURAGE_YELLOW = [
+  "Staying in control is a win. You're building discipline!",
+  "Moderation is a skill, and you're getting better at it.",
+  "Small steps, big results. Keep this up!",
+];
+const ENCOURAGE_GREEN = [
+  "You crushed it today! Your body thanks you. 💪",
+  "Zero added sugar — that's elite discipline!",
+  "Another clean day in the books. Legend.",
+];
+
+function getStreak(logs) {
+  let streak = 0;
+  const d = new Date();
+  // Start from yesterday if today not logged yet
+  const todayLog = logs[dayKey(d)];
+  if (todayLog && todayLog.status === 'green') streak++;
+  else if (todayLog && todayLog.status !== 'green') return streak;
+
+  const start = new Date(d);
+  start.setDate(start.getDate() - (todayLog ? 1 : 1));
+
+  for (let i = 0; i < 365; i++) {
+    const k = dayKey(start);
+    const log = logs[k];
+    if (log && log.status === 'green') { streak++; start.setDate(start.getDate() - 1); }
+    else break;
+  }
+  return streak;
+}
+
+function getWeekSaved(logs) {
+  let saved = 0;
+  const d = new Date();
+  for (let i = 0; i < 7; i++) {
+    const k = dayKey(d);
+    const log = logs[k];
+    if (log && log.status === 'green') saved += 25; // saved full daily limit
+    else if (log && log.status === 'yellow') saved += 15; // saved ~15g
+    d.setDate(d.getDate() - 1);
+  }
+  return saved;
+}
+
+// ─── Components ────────────────────────────────────────────
+
+function BottomNav({ tab, setTab }) {
+  const tabs = [
+    { id: 'home', icon: '🏠', label: 'Home' },
+    { id: 'calendar', icon: '📅', label: 'Calendar' },
+    { id: 'weight', icon: '⚖️', label: 'Weight' },
+  ];
+  return (
+    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate2-100 flex justify-around items-center h-16 z-40 max-w-lg mx-auto">
+      {tabs.map(t => (
+        <button key={t.id} onClick={() => setTab(t.id)}
+          className={`flex flex-col items-center gap-0.5 py-1 px-4 rounded-xl transition-colors ${tab === t.id ? 'text-mint-600' : 'text-slate2-400'}`}>
+          <span className="text-xl">{t.icon}</span>
+          <span className="text-[10px] font-medium">{t.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function StreakBadge({ streak }) {
+  return (
+    <div className="bg-gradient-to-br from-mint-400 to-mint-600 rounded-2xl p-4 text-white text-center fade-in">
+      <div className="text-xs font-medium uppercase tracking-wide opacity-80">Low/No-Sugar Streak</div>
+      <div className="text-5xl font-800 my-1">{streak}</div>
+      <div className="text-sm font-medium opacity-90">{streak === 1 ? 'day' : 'days'} strong</div>
+    </div>
+  );
+}
+
+function WeekSummary({ logs }) {
+  const saved = getWeekSaved(logs);
+  const tsp = (saved / 4).toFixed(0);
+  const cal = (saved * 4).toFixed(0);
+  return (
+    <div className="bg-white rounded-2xl p-4 border border-slate2-100 fade-in">
+      <div className="text-xs font-medium text-slate2-400 mb-2">This week you saved</div>
+      <div className="flex gap-4">
+        <div className="flex-1 text-center">
+          <div className="text-2xl font-700 text-mint-600">{saved}g</div>
+          <div className="text-[11px] text-slate2-400">sugar</div>
+        </div>
+        <div className="w-px bg-slate2-100"></div>
+        <div className="flex-1 text-center">
+          <div className="text-2xl font-700 text-mint-600">{tsp}</div>
+          <div className="text-[11px] text-slate2-400">teaspoons</div>
+        </div>
+        <div className="w-px bg-slate2-100"></div>
+        <div className="flex-1 text-center">
+          <div className="text-2xl font-700 text-mint-600">{cal}</div>
+          <div className="text-[11px] text-slate2-400">calories</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SugarDetailModal({ onClose, onSave }) {
+  const [selected, setSelected] = useState([]);
+  const [grams, setGrams] = useState('');
+  const toggle = (id) => setSelected(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-end justify-center" onClick={onClose}>
+      <div className="bg-white rounded-t-3xl w-full max-w-lg p-6 pb-8 slide-up" onClick={e => e.stopPropagation()}>
+        <div className="w-10 h-1 bg-slate2-200 rounded-full mx-auto mb-4"></div>
+        <h3 className="text-lg font-700 text-slate2-800 mb-1">What did you have?</h3>
+        <p className="text-sm text-slate2-400 mb-4">Tap all that apply</p>
+        <div className="grid grid-cols-2 gap-2 mb-5">
+          {SUGAR_CATEGORIES.map(c => (
+            <button key={c.id} onClick={() => toggle(c.id)}
+              className={`flex items-center gap-2 p-3 rounded-xl border-2 text-left transition-all text-sm ${
+                selected.includes(c.id) ? 'border-mint-400 bg-mint-50' : 'border-slate2-100 bg-white'}`}>
+              <span className="text-xl">{c.emoji}</span>
+              <span className="font-medium text-slate2-700 text-xs leading-tight">{c.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="mb-5">
+          <label className="text-sm font-medium text-slate2-600 mb-1 block">
+            Estimated sugar (optional)
+            <span className="text-slate2-400 font-normal ml-1">Daily target: 25g / 6 tsp</span>
+          </label>
+          <div className="flex gap-2 items-center">
+            <input type="number" value={grams} onChange={e => setGrams(e.target.value)}
+              placeholder="0" min="0" max="200"
+              className="w-24 border-2 border-slate2-200 rounded-xl px-3 py-2 text-center text-lg font-600 focus:border-mint-400 focus:outline-none transition-colors" />
+            <span className="text-sm text-slate2-400">grams</span>
+            <div className="flex-1"></div>
+            <div className="bg-mint-50 rounded-lg px-3 py-1.5">
+              <span className="text-xs font-600 text-mint-700">Target: 25g</span>
+            </div>
+          </div>
+        </div>
+        <button onClick={() => onSave(selected, Number(grams) || 0)}
+          className="w-full bg-mint-500 hover:bg-mint-600 text-white font-600 py-3 rounded-xl transition-colors">
+          Save entry
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CravingModal({ onClose }) {
+  const [seconds, setSeconds] = useState(60);
+  const [running, setRunning] = useState(false);
+  const intervalRef = useRef(null);
+  const whyRef = useRef(getData().why || "I want to feel healthier, lighter, and in control of what I eat.");
+
+  useEffect(() => {
+    if (running && seconds > 0) {
+      intervalRef.current = setInterval(() => setSeconds(s => { if (s <= 1) { clearInterval(intervalRef.current); return 0; } return s - 1; }), 1000);
+    }
+    return () => clearInterval(intervalRef.current);
+  }, [running]);
+
+  const startTimer = () => setRunning(true);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-3xl w-full max-w-sm p-6 fade-in" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-700 text-slate2-800 text-center mb-2">Craving SOS</h3>
+        <p className="text-sm text-slate2-500 text-center mb-5">You've got this. Breathe with me.</p>
+
+        {/* Breathing circle */}
+        <div className="flex justify-center mb-4">
+          <div className="relative w-32 h-32 flex items-center justify-center">
+            <div className={`absolute inset-0 rounded-full bg-mint-200 ${running && seconds > 0 ? 'breathe-circle' : 'opacity-40'}`}></div>
+            <div className="relative text-center">
+              {!running ? (
+                <button onClick={startTimer} className="text-mint-700 font-700 text-sm">Start breathing</button>
+              ) : (
+                <>
+                  <div className="text-3xl font-800 text-mint-700">{seconds}</div>
+                  <div className="text-[10px] text-mint-600 font-medium">{seconds > 0 ? 'breathe slowly' : 'done!'}</div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Why I started */}
+        <div className="bg-warm rounded-xl p-3 mb-4 border border-slate2-100">
+          <div className="text-[10px] font-600 text-slate2-400 uppercase tracking-wide mb-1">Remember why you started</div>
+          <p className="text-sm text-slate2-700 italic leading-relaxed">"{whyRef.current}"</p>
+        </div>
+
+        {/* Healthy swaps */}
+        <div className="mb-4">
+          <div className="text-xs font-600 text-slate2-500 mb-2">Try one of these instead</div>
+          {SWAPS.map((s, i) => (
+            <div key={i} className="flex items-center gap-2 py-1.5">
+              <span className="text-lg">{s.emoji}</span>
+              <span className="text-sm text-slate2-600">{s.text}</span>
+            </div>
+          ))}
+        </div>
+
+        <button onClick={onClose} className="w-full bg-slate2-100 hover:bg-slate2-200 text-slate2-600 font-600 py-2.5 rounded-xl transition-colors text-sm">
+          I'm okay now
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CheckInCard({ todayLog, onCheckIn }) {
+  const [showMsg, setShowMsg] = useState(null);
+
+  const handleClick = (status) => {
+    onCheckIn(status);
+    const msgs = status === 'green' ? ENCOURAGE_GREEN : status === 'yellow' ? ENCOURAGE_YELLOW : ENCOURAGE_RED;
+    setShowMsg(msgs[Math.floor(Math.random() * msgs.length)]);
+    setTimeout(() => setShowMsg(null), 4000);
+  };
+
+  if (todayLog) {
+    const colors = { green: 'bg-sugar-green/10 border-sugar-green/30', yellow: 'bg-sugar-yellow/10 border-sugar-yellow/30', red: 'bg-sugar-red/10 border-sugar-red/30' };
+    const labels = { green: 'Zero added sugar — crushed it! 💪', yellow: 'Stayed in control today', red: "Tomorrow's a fresh start" };
+    return (
+      <div className={`rounded-2xl p-5 border-2 ${colors[todayLog.status]} fade-in text-center`}>
+        <div className="text-sm font-600 text-slate2-700 mb-1">Today's check-in</div>
+        <div className="text-lg font-700 text-slate2-800">{labels[todayLog.status]}</div>
+        {todayLog.items?.length > 0 && (
+          <div className="mt-2 text-xs text-slate2-500">
+            Logged: {todayLog.items.map(id => SUGAR_CATEGORIES.find(c => c.id === id)?.emoji).join(' ')}
+            {todayLog.grams > 0 && ` · ${todayLog.grams}g sugar`}
+          </div>
+        )}
+        {showMsg && <p className="mt-3 text-sm text-slate2-600 italic fade-in">{showMsg}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-2xl p-5 border border-slate2-100 text-center fade-in">
+      <p className="text-base font-600 text-slate2-700 mb-4">Did you have any sugary drinks or sweet foods today?</p>
+      <div className="flex flex-col gap-2">
+        <button onClick={() => handleClick('green')}
+          className="flex items-center justify-center gap-2 bg-sugar-green/10 hover:bg-sugar-green/20 border-2 border-sugar-green/30 text-slate2-700 font-600 py-3 px-4 rounded-xl transition-all text-sm">
+          🟢 Zero Added Sugar! (Crushed it)
+        </button>
+        <button onClick={() => handleClick('yellow')}
+          className="flex items-center justify-center gap-2 bg-sugar-yellow/10 hover:bg-sugar-yellow/20 border-2 border-sugar-yellow/30 text-slate2-700 font-600 py-3 px-4 rounded-xl transition-all text-sm">
+          🟡 Just a Little (Stayed in control)
+        </button>
+        <button onClick={() => handleClick('red')}
+          className="flex items-center justify-center gap-2 bg-sugar-red/10 hover:bg-sugar-red/20 border-2 border-sugar-red/30 text-slate2-700 font-600 py-3 px-4 rounded-xl transition-all text-sm">
+          🔴 Had Sugar (Resetting tomorrow)
+        </button>
+      </div>
+      {showMsg && <p className="mt-4 text-sm text-slate2-600 italic fade-in">{showMsg}</p>}
+    </div>
+  );
+}
+
+function CalendarView({ logs }) {
+  const [viewDate, setViewDate] = useState(new Date());
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+  const monthName = viewDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const statusColor = (day) => {
+    if (!day) return '';
+    const k = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const log = logs[k];
+    if (!log) return 'bg-slate2-50 text-slate2-300';
+    if (log.status === 'green') return 'bg-sugar-green text-white';
+    if (log.status === 'yellow') return 'bg-sugar-yellow text-slate2-800';
+    return 'bg-sugar-red text-white';
+  };
+
+  const prevMonth = () => setViewDate(new Date(year, month - 1, 1));
+  const nextMonth = () => setViewDate(new Date(year, month + 1, 1));
+
+  // Count stats
+  const greens = Object.entries(logs).filter(([k,v]) => k.startsWith(`${year}-${String(month+1).padStart(2,'0')}`) && v.status === 'green').length;
+  const yellows = Object.entries(logs).filter(([k,v]) => k.startsWith(`${year}-${String(month+1).padStart(2,'0')}`) && v.status === 'yellow').length;
+  const reds = Object.entries(logs).filter(([k,v]) => k.startsWith(`${year}-${String(month+1).padStart(2,'0')}`) && v.status === 'red').length;
+
+  return (
+    <div className="fade-in">
+      <div className="bg-white rounded-2xl p-4 border border-slate2-100">
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={prevMonth} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate2-50 text-slate2-500">‹</button>
+          <h3 className="font-700 text-slate2-800">{monthName}</h3>
+          <button onClick={nextMonth} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate2-50 text-slate2-500">›</button>
+        </div>
+        <div className="grid grid-cols-7 gap-1 mb-1">
+          {['S','M','T','W','T','F','S'].map((d,i) => (
+            <div key={i} className="text-[10px] font-600 text-slate2-400 text-center py-1">{d}</div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {cells.map((day, i) => (
+            <div key={i} className={`aspect-square flex items-center justify-center rounded-lg text-xs font-600 ${day ? statusColor(day) : ''}`}>
+              {day || ''}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Month summary */}
+      <div className="flex gap-3 mt-3">
+        <div className="flex-1 bg-sugar-green/10 rounded-xl p-3 text-center">
+          <div className="text-xl font-700 text-mint-700">{greens}</div>
+          <div className="text-[10px] text-slate2-500 font-medium">clean days</div>
+        </div>
+        <div className="flex-1 bg-sugar-yellow/10 rounded-xl p-3 text-center">
+          <div className="text-xl font-700 text-yellow-700">{yellows}</div>
+          <div className="text-[10px] text-slate2-500 font-medium">moderate</div>
+        </div>
+        <div className="flex-1 bg-sugar-red/10 rounded-xl p-3 text-center">
+          <div className="text-xl font-700 text-red-500">{reds}</div>
+          <div className="text-[10px] text-slate2-500 font-medium">high sugar</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BmiCard({ height, currentWeight }) {
+  if (!height || !currentWeight) return null;
+  const hm = height / 100;
+  const bmi = currentWeight / (hm * hm);
+  const idealLow = (18.5 * hm * hm).toFixed(1);
+  const idealHigh = (24.9 * hm * hm).toFixed(1);
+  const toIdeal = currentWeight > Number(idealHigh) ? (currentWeight - Number(idealHigh)).toFixed(1) : 0;
+
+  let category, catColor, catBg;
+  if (bmi < 18.5) { category = 'Underweight'; catColor = 'text-blue-600'; catBg = 'bg-blue-50'; }
+  else if (bmi < 25) { category = 'Normal'; catColor = 'text-mint-700'; catBg = 'bg-mint-50'; }
+  else if (bmi < 30) { category = 'Overweight'; catColor = 'text-yellow-700'; catBg = 'bg-yellow-50'; }
+  else { category = 'Obese'; catColor = 'text-red-600'; catBg = 'bg-red-50'; }
+
+  // BMI gauge position (15-40 range mapped to 0-100%)
+  const gaugePos = Math.min(100, Math.max(0, ((bmi - 15) / 25) * 100));
+  // Zone markers for the gauge
+  const zones = [
+    { from: 0, to: ((18.5-15)/25)*100, color: '#60a5fa' },    // underweight
+    { from: ((18.5-15)/25)*100, to: ((25-15)/25)*100, color: '#4ECCA3' },  // normal
+    { from: ((25-15)/25)*100, to: ((30-15)/25)*100, color: '#F0C040' },    // overweight
+    { from: ((30-15)/25)*100, to: 100, color: '#E85D5D' },                 // obese
+  ];
+
+  return (
+    <div className="bg-white rounded-2xl p-5 border border-slate2-100 mb-4 fade-in">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-base font-700 text-slate2-800">Your BMI</h3>
+        <span className={`text-xs font-600 px-2.5 py-1 rounded-full ${catBg} ${catColor}`}>{category}</span>
+      </div>
+
+      <div className="text-center mb-3">
+        <span className="text-4xl font-800 text-slate2-800">{bmi.toFixed(1)}</span>
+        <span className="text-sm text-slate2-400 ml-1">kg/m²</span>
+      </div>
+
+      {/* Gauge bar */}
+      <div className="relative h-3 rounded-full overflow-hidden flex mb-1">
+        {zones.map((z, i) => (
+          <div key={i} style={{ width: `${z.to - z.from}%`, backgroundColor: z.color }} className="h-full" />
+        ))}
+        <div className="absolute top-1/2 -translate-y-1/2" style={{ left: `${gaugePos}%` }}>
+          <div className="w-4 h-4 bg-white border-2 border-slate2-700 rounded-full -ml-2 shadow-sm"></div>
+        </div>
+      </div>
+      <div className="flex justify-between text-[9px] text-slate2-400 font-medium mb-4">
+        <span>15</span><span>18.5</span><span>25</span><span>30</span><span>40</span>
+      </div>
+
+      {/* Ideal weight & goal */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-mint-50 rounded-xl p-3 text-center">
+          <div className="text-[10px] text-mint-600 font-medium mb-0.5">Ideal weight range</div>
+          <div className="text-sm font-700 text-mint-800">{idealLow} – {idealHigh} kg</div>
+        </div>
+        <div className={`rounded-xl p-3 text-center ${Number(toIdeal) > 0 ? 'bg-coral/10' : 'bg-mint-50'}`}>
+          <div className={`text-[10px] font-medium mb-0.5 ${Number(toIdeal) > 0 ? 'text-coral' : 'text-mint-600'}`}>
+            {Number(toIdeal) > 0 ? 'To lose for healthy BMI' : 'Status'}
+          </div>
+          <div className={`text-sm font-700 ${Number(toIdeal) > 0 ? 'text-coral' : 'text-mint-800'}`}>
+            {Number(toIdeal) > 0 ? `${toIdeal} kg to go` : "You're in range! 🎉"}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 text-[10px] text-slate2-400 text-center">
+        Height: {height} cm · Healthy BMI: 18.5 – 24.9
+      </div>
+    </div>
+  );
+}
+
+function WeightTracker({ weights, height, onSaveWeight, onSaveHeight }) {
+  const [input, setInput] = useState('');
+  const [heightInput, setHeightInput] = useState('');
+  const sortedWeights = useMemo(() =>
+    Object.entries(weights).sort((a,b) => a[0].localeCompare(b[0])).slice(-8),
+  [weights]);
+
+  const handleSave = () => {
+    if (!input || isNaN(Number(input))) return;
+    onSaveWeight(Number(input));
+    setInput('');
+  };
+
+  const handleHeightSave = () => {
+    const h = Number(heightInput);
+    if (!h || h < 100 || h > 250) return;
+    onSaveHeight(h);
+    setHeightInput('');
+  };
+
+  // Latest weight for BMI
+  const latestWeight = sortedWeights.length ? sortedWeights[sortedWeights.length - 1][1] : null;
+
+  // Simple SVG line chart
+  const vals = sortedWeights.map(([,v]) => v);
+  const min = vals.length ? Math.min(...vals) - 2 : 60;
+  const max = vals.length ? Math.max(...vals) + 2 : 100;
+  const range = max - min || 1;
+  const W = 300, H = 120, PAD = 20;
+
+  const points = vals.map((v, i) => {
+    const x = PAD + (i / Math.max(vals.length - 1, 1)) * (W - PAD * 2);
+    const y = PAD + (1 - (v - min) / range) * (H - PAD * 2);
+    return { x, y, v };
+  });
+
+  const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+
+  // Trend direction
+  const trend = vals.length >= 2 ? vals[vals.length-1] - vals[vals.length-2] : 0;
+
+  return (
+    <div className="fade-in">
+      {/* Height setup (one-time, editable) */}
+      {!height ? (
+        <div className="bg-white rounded-2xl p-5 border-2 border-dashed border-mint-300 mb-4 text-center fade-in">
+          <div className="text-2xl mb-2">📏</div>
+          <h3 className="text-base font-700 text-slate2-800 mb-1">Set your height</h3>
+          <p className="text-xs text-slate2-400 mb-3">Needed to calculate BMI and ideal weight</p>
+          <div className="flex gap-2 justify-center">
+            <input type="number" value={heightInput} onChange={e => setHeightInput(e.target.value)}
+              placeholder="e.g. 170" min="100" max="250"
+              className="w-28 border-2 border-slate2-200 rounded-xl px-3 py-2.5 text-lg font-600 text-center focus:border-mint-400 focus:outline-none transition-colors" />
+            <span className="flex items-center text-sm text-slate2-400 font-medium">cm</span>
+            <button onClick={handleHeightSave}
+              className="bg-mint-500 hover:bg-mint-600 text-white font-600 px-5 py-2.5 rounded-xl transition-colors">
+              Save
+            </button>
+          </div>
+        </div>
+      ) : (
+        <BmiCard height={height} currentWeight={latestWeight} />
+      )}
+
+      {/* Weight log */}
+      <div className="bg-white rounded-2xl p-5 border border-slate2-100 mb-4">
+        <h3 className="text-base font-700 text-slate2-800 mb-3">Log today's weight</h3>
+        <div className="flex gap-2">
+          <input type="number" value={input} onChange={e => setInput(e.target.value)}
+            placeholder="e.g. 75" step="0.1"
+            className="flex-1 border-2 border-slate2-200 rounded-xl px-4 py-2.5 text-lg font-600 focus:border-mint-400 focus:outline-none transition-colors" />
+          <span className="flex items-center text-sm text-slate2-400 font-medium">kg</span>
+          <button onClick={handleSave}
+            className="bg-mint-500 hover:bg-mint-600 text-white font-600 px-5 py-2.5 rounded-xl transition-colors">
+            Save
+          </button>
+        </div>
+      </div>
+
+      {vals.length > 0 && (
+        <div className="bg-white rounded-2xl p-4 border border-slate2-100 mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-700 text-slate2-700">Weight trend</h3>
+            {vals.length >= 2 && (
+              <span className={`text-xs font-600 px-2 py-0.5 rounded-full ${trend <= 0 ? 'bg-mint-100 text-mint-700' : 'bg-red-50 text-red-500'}`}>
+                {trend <= 0 ? '↓' : '↑'} {Math.abs(trend).toFixed(1)} kg
+              </span>
+            )}
+          </div>
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+            {/* Grid lines */}
+            {[0, 0.25, 0.5, 0.75, 1].map((f, i) => (
+              <line key={i} x1={PAD} x2={W-PAD} y1={PAD + f*(H-PAD*2)} y2={PAD + f*(H-PAD*2)} stroke="#e4e6e8" strokeWidth="0.5" />
+            ))}
+            {/* Gradient fill */}
+            <defs>
+              <linearGradient id="wg" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor="#4ECCA3" stopOpacity="0.3"/>
+                <stop offset="100%" stopColor="#4ECCA3" stopOpacity="0"/>
+              </linearGradient>
+            </defs>
+            {points.length > 1 && (
+              <path d={`${pathD} L ${points[points.length-1].x} ${H-PAD} L ${points[0].x} ${H-PAD} Z`} fill="url(#wg)" />
+            )}
+            {/* Line */}
+            {points.length > 1 && <path d={pathD} fill="none" stroke="#4ECCA3" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />}
+            {/* Dots & labels */}
+            {points.map((p, i) => (
+              <g key={i}>
+                <circle cx={p.x} cy={p.y} r="4" fill="white" stroke="#4ECCA3" strokeWidth="2" />
+                <text x={p.x} y={p.y - 10} textAnchor="middle" fontSize="8" fill="#5d656e" fontWeight="600">{p.v}</text>
+              </g>
+            ))}
+            {/* Date labels */}
+            {sortedWeights.map(([date], i) => {
+              const x = PAD + (i / Math.max(sortedWeights.length - 1, 1)) * (W - PAD * 2);
+              return <text key={i} x={x} y={H - 4} textAnchor="middle" fontSize="7" fill="#a8aeb4">{date.slice(5)}</text>;
+            })}
+          </svg>
+        </div>
+      )}
+
+      {/* Edit height */}
+      {height && (
+        <button onClick={() => { setData(d => { delete d.height; }); onSaveHeight(null); }}
+          className="w-full text-xs text-slate2-400 hover:text-slate2-600 py-2 transition-colors">
+          Change height ({height} cm)
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── App ───────────────────────────────────────────────────
+
+function App() {
+  const [tab, setTab] = useState('home');
+  const [data, setDataState] = useState(getData);
+  const [showDetail, setShowDetail] = useState(false);
+  const [showCraving, setShowCraving] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState(null);
+
+  const refresh = () => setDataState(getData());
+
+  const todayLog = data.logs[today()];
+  const streak = getStreak(data.logs);
+
+  const handleCheckIn = (status) => {
+    if (status === 'green') {
+      setData(d => { d.logs[today()] = { status, items: [], grams: 0, date: today() }; });
+      refresh();
+    } else {
+      setPendingStatus(status);
+      setShowDetail(true);
+    }
+  };
+
+  const handleDetailSave = (items, grams) => {
+    setData(d => { d.logs[today()] = { status: pendingStatus, items, grams, date: today() }; });
+    setShowDetail(false);
+    setPendingStatus(null);
+    refresh();
+  };
+
+  const handleWeightSave = (weight) => {
+    setData(d => { d.weights[today()] = weight; });
+    refresh();
+  };
+
+  const handleHeightSave = (h) => {
+    if (h === null) { setData(d => { delete d.height; }); }
+    else { setData(d => { d.height = h; }); }
+    refresh();
+  };
+
+  return (
+    <div className="max-w-lg mx-auto min-h-screen pb-20">
+      {/* Header */}
+      <header className="px-5 pt-6 pb-3 flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-800 text-slate2-800">SugarFree Journey</h1>
+          <p className="text-xs text-slate2-400 font-medium mt-0.5">
+            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+          </p>
+        </div>
+        <button onClick={() => setShowCraving(true)}
+          className="bg-coral/10 hover:bg-coral/20 text-coral font-700 text-xs px-3 py-2 rounded-xl transition-colors border border-coral/20 whitespace-nowrap">
+          🆘 Craving SOS
+        </button>
+      </header>
+
+      <main className="px-5 space-y-4">
+        {tab === 'home' && (
+          <>
+            <StreakBadge streak={streak} />
+            <CheckInCard todayLog={todayLog} onCheckIn={handleCheckIn} />
+            <WeekSummary logs={data.logs} />
+
+            {/* Quick weekly dots */}
+            <div className="bg-white rounded-2xl p-4 border border-slate2-100">
+              <div className="text-xs font-medium text-slate2-400 mb-2">Last 7 days</div>
+              <div className="flex justify-between">
+                {Array.from({length: 7}).map((_, i) => {
+                  const d = new Date();
+                  d.setDate(d.getDate() - (6 - i));
+                  const k = dayKey(d);
+                  const log = data.logs[k];
+                  const color = log ? (log.status === 'green' ? 'bg-sugar-green' : log.status === 'yellow' ? 'bg-sugar-yellow' : 'bg-sugar-red') : 'bg-slate2-100';
+                  const label = d.toLocaleDateString('en-US', { weekday: 'narrow' });
+                  return (
+                    <div key={i} className="flex flex-col items-center gap-1">
+                      <div className={`w-7 h-7 rounded-full ${color}`}></div>
+                      <span className="text-[10px] text-slate2-400 font-medium">{label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
+        {tab === 'calendar' && <CalendarView logs={data.logs} />}
+        {tab === 'weight' && <WeightTracker weights={data.weights || {}} height={data.height} onSaveWeight={handleWeightSave} onSaveHeight={handleHeightSave} />}
+      </main>
+
+      <BottomNav tab={tab} setTab={setTab} />
+      {showDetail && <SugarDetailModal onClose={() => { setShowDetail(false); setPendingStatus(null); }} onSave={handleDetailSave} />}
+      {showCraving && <CravingModal onClose={() => setShowCraving(false)} />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
